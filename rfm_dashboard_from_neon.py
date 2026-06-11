@@ -1,26 +1,42 @@
 import streamlit as st
 import pandas as pd
 import plotly.graph_objects as go
-import plotly.express as px
-import numpy as np
-from datetime import datetime, timedelta
 import warnings
+import psycopg2
 
 warnings.filterwarnings('ignore')
 
 # Page configuration
 st.set_page_config(page_title="RFM Customer Segmentation", layout="wide", initial_sidebar_state="expanded")
 
-# Load RFM data from CSV
+# PostgreSQL Connection Details
+DB_URL = "DAURL"
+
+# Load RFM data from PostgreSQL
 @st.cache_data(ttl=3600)
 def load_rfm_data():
-    import os
-    csv_path = os.path.join(os.path.dirname(__file__), 'customer_segments.csv')
-    df = pd.read_csv(csv_path)
-    # Rename column if needed
-    if 'user_id' in df.columns:
-        df.rename(columns={'user_id': 'customer_id'}, inplace=True)
-    return df
+    try:
+        conn = psycopg2.connect(DB_URL)
+        
+        query = """
+        SELECT 
+            customer_id,
+            recency,
+            frequency,
+            monetary,
+            cluster
+        FROM analytics.rfm_customers
+        ORDER BY customer_id
+        """
+        
+        df = pd.read_sql(query, conn)
+        conn.close()
+        
+        return df
+    
+    except Exception as e:
+        st.error(f"Failed to connect to database: {e}")
+        return None
 
 # Color mapping for segments
 SEGMENT_COLORS = {
@@ -42,6 +58,10 @@ def page_executive_overview():
     
     try:
         rfm_df = load_rfm_data()
+        
+        if rfm_df is None or rfm_df.empty:
+            st.warning("No data available. Please check the database connection.")
+            return
         
         # Calculate key metrics
         total_customers = len(rfm_df)
@@ -154,6 +174,10 @@ def page_rfm_analysis():
     try:
         rfm_df = load_rfm_data()
         
+        if rfm_df is None or rfm_df.empty:
+            st.warning("No data available. Please check the database connection.")
+            return
+        
         # 3D Scatter Plot
         st.subheader("3D RFM Space - Recency vs Frequency vs Monetary")
         
@@ -250,6 +274,11 @@ def page_high_value():
     
     try:
         rfm_df = load_rfm_data()
+        
+        if rfm_df is None or rfm_df.empty:
+            st.warning("No data available. Please check the database connection.")
+            return
+        
         high_value = rfm_df[rfm_df['cluster'].isin([0, 1])]
         
         col1, col2 = st.columns(2)
@@ -339,6 +368,10 @@ def page_at_risk():
     try:
         rfm_df = load_rfm_data()
         
+        if rfm_df is None or rfm_df.empty:
+            st.warning("No data available. Please check the database connection.")
+            return
+        
         col1, col2 = st.columns(2)
         
         with col1:
@@ -422,6 +455,10 @@ def page_marketing_plan():
     
     try:
         rfm_df = load_rfm_data()
+        
+        if rfm_df is None or rfm_df.empty:
+            st.warning("No data available. Please check the database connection.")
+            return
         
         st.subheader("Segment Strategy & Recommendations")
         
@@ -582,13 +619,24 @@ def main():
     )
     
     st.sidebar.markdown("---")
-    st.sidebar.info(
-        "**Quick Facts:**\n"
-        "• 4 customer segments\n"
-        "• Champions: 11%, highest LTV\n"
-        "• At-Risk: 44%, reactivation focus\n"
-        "• Lost: 11%, low priority"
-    )
+    
+    # Load data to get stats for sidebar
+    rfm_df = load_rfm_data()
+    
+    if rfm_df is not None and not rfm_df.empty:
+        champions_pct = (len(rfm_df[rfm_df['cluster']==0]) / len(rfm_df) * 100) if len(rfm_df) > 0 else 0
+        st.sidebar.info(
+            "**Quick Facts:**\n"
+            f"• Total Customers: {len(rfm_df):,}\n"
+            f"• Total Revenue: ${rfm_df['monetary'].sum():,.0f}\n"
+            f"• Champions: {champions_pct:.1f}%\n"
+            f"• Database: Connected ✓"
+        )
+    else:
+        st.sidebar.error("Database connection failed")
+    
+    st.sidebar.markdown("---")
+    st.sidebar.caption("Data Source: PostgreSQL (Neon)")
     
     try:
         if page == "Executive Overview":
@@ -604,7 +652,7 @@ def main():
     
     except Exception as e:
         st.error(f"Error loading dashboard: {e}")
-        st.info("Please ensure all required tables exist in the database.")
+        st.info("Please ensure all required tables exist in the PostgreSQL database.")
 
 if __name__ == "__main__":
     main()
